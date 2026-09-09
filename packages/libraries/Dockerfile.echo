@@ -1,0 +1,26 @@
+# syntax=docker/dockerfile:1
+# Same app, same base image -- only the npm package registry changes.
+# See: https://docs.echohq.com/libraries/implementing-npm
+FROM node:23
+
+WORKDIR /app
+
+COPY package*.json ./
+COPY .npmrc.echo ./.npmrc
+
+# Echo's npm index requires auth. Pull the Libraries key in as a BuildKit
+# secret (never a --build-arg, which would leak into image history) and
+# scrub it from the project .npmrc before the layer commits.
+RUN --mount=type=secret,id=ECHO_LIBRARIES_KEY \
+    npm config set //npm.echohq.com/:_authToken "$(cat /run/secrets/ECHO_LIBRARIES_KEY)" --location=project && \
+    npm config set //packages.echohq.com/:_authToken "$(cat /run/secrets/ECHO_LIBRARIES_KEY)" --location=project && \
+    npm install --omit=dev; \
+    status=$?; \
+    npm config delete //npm.echohq.com/:_authToken --location=project || true; \
+    npm config delete //packages.echohq.com/:_authToken --location=project || true; \
+    exit $status
+
+COPY server.js ./
+
+EXPOSE 8080
+CMD ["node", "server.js"]

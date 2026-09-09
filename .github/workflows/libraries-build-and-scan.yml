@@ -1,0 +1,157 @@
+name: libraries - build & scan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/libraries/**"
+      - ".github/workflows/libraries-build-and-scan.yml"
+  pull_request:
+    paths:
+      - "packages/libraries/**"
+      - ".github/workflows/libraries-build-and-scan.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-scan:
+    name: build & scan (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: regular
+            dockerfile: Dockerfile
+            image_name: libraries-regular
+          - variant: echo
+            dockerfile: Dockerfile.echo
+            image_name: libraries-echo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Echo's npm index (npm.echohq.com) requires a Libraries key, a
+      # different key type from the reg.echohq.com registry credentials
+      # used by packages/basic. Generate one under Settings -> Keys in the
+      # Echo platform and store it as the ECHO_LIBRARIES_KEY repo secret.
+      - name: Verify Echo Libraries key is set
+        if: matrix.variant == 'echo'
+        run: |
+          if [ -z "${{ secrets.ECHO_LIBRARIES_KEY }}" ]; then
+            echo "::error::ECHO_LIBRARIES_KEY secret is required to build packages/libraries/Dockerfile.echo (see root README)"
+            exit 1
+          fi
+
+      - name: Set up Docker Buildx
+        if: matrix.variant == 'echo'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.variant }} image
+        env:
+          ECHO_LIBRARIES_KEY: ${{ secrets.ECHO_LIBRARIES_KEY }}
+        run: |
+          if [ "${{ matrix.variant }}" = "echo" ]; then
+            docker buildx build \
+              --secret id=ECHO_LIBRARIES_KEY,env=ECHO_LIBRARIES_KEY \
+              --load \
+              -f packages/libraries/${{ matrix.dockerfile }} \
+              -t ${{ matrix.image_name }}:${{ github.sha }} \
+              packages/libraries
+          else
+            docker build \
+              -f packages/libraries/${{ matrix.dockerfile }} \
+              -t ${{ matrix.image_name }}:${{ github.sha }} \
+              packages/libraries
+          fi
+
+      - name: Set up Trivy
+        uses: aquasecurity/setup-trivy@v0.2.6
+
+      # Echo's npm index keeps the same package version while backporting
+      # fixes underneath, so a plain scan can't see the difference. The
+      # OpenVEX feed tells Trivy which CVEs Echo already remediated for the
+      # exact installed version. Public, unauthenticated feed.
+      - name: Download Echo OpenVEX feed
+        if: matrix.variant == 'echo'
+        run: curl -fsSL https://advisory.echohq.com/openvex.json -o openvex.json
+
+      - name: Scan image with Trivy (table)
+        run: |
+          VEX_ARGS=""
+          if [ "${{ matrix.variant }}" = "echo" ]; then
+            VEX_ARGS="--vex openvex.json"
+          fi
+          trivy image --scanners vuln --ignore-unfixed --exit-code 0 \
+            $VEX_ARGS --format table \
+            ${{ matrix.image_name }}:${{ github.sha }}
+
+      - name: Scan image with Trivy (json)
+        run: |
+          VEX_ARGS=""
+          if [ "${{ matrix.variant }}" = "echo" ]; then
+            VEX_ARGS="--vex openvex.json"
+          fi
+          trivy image --scanners vuln --ignore-unfixed --exit-code 0 \
+            $VEX_ARGS --format json \
+            --output trivy-results-${{ matrix.variant }}.json \
+            ${{ matrix.image_name }}:${{ github.sha }}
+
+      - name: Summarize scan results
+        if: always()
+        run: |
+          {
+            echo "### Trivy scan - ${{ matrix.variant }} image (\`${{ matrix.dockerfile }}\`)"
+            echo
+            counts=$(jq -r '
+              [.Results[]?.Vulnerabilities[]?] as $vulns
+              | ($vulns | length) as $total
+              | ($vulns | group_by(.Severity) | map({(.[0].Severity): length}) | add // {}) as $by_sev
+              | "| Severity | Count |\n|---|---|\n"
+                + (["CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"]
+                    | map("| \(.) | \($by_sev[.] // 0) |")
+                    | join("\n"))
+                + "\n| **Total** | **\($total)** |"
+            ' trivy-results-${{ matrix.variant }}.json)
+            echo "$counts"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Trivy results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results-${{ matrix.variant }}
+          path: trivy-results-${{ matrix.variant }}.json
+          retention-days: 14
+
+  compare:
+    name: compare results
+    needs: build-and-scan
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all Trivy results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: trivy-results-*
+          path: results
+          merge-multiple: true
+
+      - name: Build comparison summary
+        run: |
+          {
+            echo "## Echo demo: regular vs. Echo-hardened npm library (axios)"
+            echo
+            echo "| Severity | regular (\`Dockerfile\`) | echo (\`Dockerfile.echo\`) |"
+            echo "|---|---|---|"
+            for sev in CRITICAL HIGH MEDIUM LOW UNKNOWN; do
+              regular=$(jq -r "[.Results[]?.Vulnerabilities[]? | select(.Severity==\"$sev\")] | length" results/trivy-results-regular.json 2>/dev/null || echo 0)
+              echo_count=$(jq -r "[.Results[]?.Vulnerabilities[]? | select(.Severity==\"$sev\")] | length" results/trivy-results-echo.json 2>/dev/null || echo 0)
+              echo "| $sev | $regular | $echo_count |"
+            done
+            regular_total=$(jq -r '[.Results[]?.Vulnerabilities[]?] | length' results/trivy-results-regular.json 2>/dev/null || echo 0)
+            echo_total=$(jq -r '[.Results[]?.Vulnerabilities[]?] | length' results/trivy-results-echo.json 2>/dev/null || echo 0)
+            echo "| **Total** | **$regular_total** | **$echo_total** |"
+          } >> "$GITHUB_STEP_SUMMARY"
