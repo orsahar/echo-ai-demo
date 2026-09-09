@@ -1,15 +1,19 @@
 # libraries
 
-A minimal Node.js HTTP server using `axios`, built two ways from the **same
-base image** (`node:23` — base-image hardening is `basic`'s story, not this
-package's):
+A minimal Node.js HTTP server using `axios`, built two ways:
 
-- `Dockerfile` - dependencies installed from the public npm registry
-- `Dockerfile.echo` - identical app, dependencies installed via Echo's
+- `Dockerfile` - regular upstream base image (`node:23`), dependencies
+  installed from the public npm registry
+- `Dockerfile.echo` - identical app, built on the Echo hardened base image
+  (`reg.echohq.com/node:23`) **and** dependencies installed via Echo's
   hardened npm index (`npm.echohq.com`)
 
-Only the npm registry source differs between the two Dockerfiles, isolating
-library hardening as the single variable.
+Unlike `basic` (which isolates base-image hardening as a single variable),
+this package stacks both Echo surfaces in its `echo` variant to show the
+combined effect: base-image CVE reduction and library CVE reduction in one
+image. If you want to isolate the library variable alone the way `basic`
+isolates the base image, point `Dockerfile.echo`'s `FROM` back at plain
+`node:23`.
 
 ## The actual vulnerable dependency
 
@@ -58,15 +62,17 @@ hardening, and `npm audit` will report the `follow-redirects` advisory.
 ```bash
 docker build -f Dockerfile -t libraries-regular .
 
+docker login reg.echohq.com   # needed once, see root README for credentials
 ECHO_LIBRARIES_KEY=<your Libraries key> \
   docker buildx build --secret id=ECHO_LIBRARIES_KEY,env=ECHO_LIBRARIES_KEY \
   -f Dockerfile.echo -t libraries-echo --load .
 ```
 
 `docker buildx build --secret` requires BuildKit; on Docker Desktop / recent
-Docker Engine this is the default builder already. The Libraries key comes
-from **Settings → Keys** in the Echo platform (a different key type from
-the registry credentials used by `packages/basic`).
+Docker Engine this is the default builder already. `Dockerfile.echo` needs
+**both** registry credentials (to pull `reg.echohq.com/node:23`) and a
+Libraries key (a different key type, for `npm.echohq.com`) — both come from
+**Settings → Keys** in the Echo platform.
 
 ## Scan locally with Trivy
 

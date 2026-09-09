@@ -1,7 +1,9 @@
 # syntax=docker/dockerfile:1
-# Same app, same base image -- only the npm package registry changes.
-# See: https://docs.echohq.com/libraries/implementing-npm
-FROM node:23
+# Same app as Dockerfile -- base image AND npm registry both point at Echo,
+# stacking base-image and library hardening in one image.
+# See: https://docs.echohq.com/for-engineering/implementing#replace-the-base-image
+#      https://docs.echohq.com/libraries/implementing-npm
+FROM reg.echohq.com/node:23
 
 WORKDIR /app
 

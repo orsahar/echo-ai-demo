@@ -33,17 +33,29 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Echo's npm index (npm.echohq.com) requires a Libraries key, a
-      # different key type from the reg.echohq.com registry credentials
-      # used by packages/basic. Generate one under Settings -> Keys in the
-      # Echo platform and store it as the ECHO_LIBRARIES_KEY repo secret.
-      - name: Verify Echo Libraries key is set
+      # Dockerfile.echo pulls FROM reg.echohq.com/node:23 (base-image
+      # hardening) AND installs from npm.echohq.com (library hardening), so
+      # the echo leg needs both credential sets: the registry access key
+      # used by packages/basic, plus a separate Libraries key for npm.
+      - name: Verify Echo secrets are set
         if: matrix.variant == 'echo'
         run: |
-          if [ -z "${{ secrets.ECHO_LIBRARIES_KEY }}" ]; then
-            echo "::error::ECHO_LIBRARIES_KEY secret is required to build packages/libraries/Dockerfile.echo (see root README)"
+          missing=""
+          [ -z "${{ secrets.ECHO_REGISTRY_USERNAME }}" ] && missing="$missing ECHO_REGISTRY_USERNAME"
+          [ -z "${{ secrets.ECHO_REGISTRY_TOKEN }}" ] && missing="$missing ECHO_REGISTRY_TOKEN"
+          [ -z "${{ secrets.ECHO_LIBRARIES_KEY }}" ] && missing="$missing ECHO_LIBRARIES_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secret(s) for packages/libraries/Dockerfile.echo:$missing (see root README)"
             exit 1
           fi
+
+      - name: Log in to Echo registry
+        if: matrix.variant == 'echo'
+        uses: docker/login-action@v3
+        with:
+          registry: reg.echohq.com
+          username: ${{ secrets.ECHO_REGISTRY_USERNAME }}
+          password: ${{ secrets.ECHO_REGISTRY_TOKEN }}
 
       - name: Set up Docker Buildx
         if: matrix.variant == 'echo'

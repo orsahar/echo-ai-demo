@@ -12,13 +12,13 @@ Monorepo for Echo sales-engineering demos. Each demo lives under `packages/`.
   summary.
 
 - [`packages/libraries`](packages/libraries) - a minimal Node.js HTTP server
-  built two ways from the *same* base image: once with dependencies
-  installed from the public npm registry, once via
-  [Echo](https://docs.echohq.com)'s hardened npm index. Demonstrates
-  library-level (not base-image) hardening: a vulnerable transitive
-  dependency of `axios` is pinned deliberately, and Echo backports the CVE
-  fix without changing the installed version, so the workflow scans the
-  Echo build with Echo's OpenVEX feed to surface the reduction.
+  built two ways: once with a regular base image and dependencies from the
+  public npm registry, once on Echo's hardened base image *and* dependencies
+  from [Echo](https://docs.echohq.com)'s hardened npm index - stacking both
+  Echo surfaces. A vulnerable transitive dependency of `axios` is pinned
+  deliberately; Echo backports the CVE fix without changing the installed
+  version, so the workflow scans the Echo build with Echo's OpenVEX feed to
+  surface the reduction.
 
 ## Adding a new demo package
 
@@ -37,7 +37,8 @@ it to this repo's GitHub Actions secrets:
 
 Echo's npm index (`npm.echohq.com`) requires a separate **Libraries key**
 (also generated from Settings -> Keys, but a different key type from the
-registry credentials above). Used by `packages/libraries`:
+registry credentials above). Used by `packages/libraries`, which needs
+*both* secret sets since its echo variant uses the Echo base image too:
 
 - `ECHO_LIBRARIES_KEY` - the Libraries key used to authenticate npm installs
 
