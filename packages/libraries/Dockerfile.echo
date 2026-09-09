@@ -13,19 +13,10 @@ COPY .npmrc.echo ./.npmrc
 # Echo's npm index requires auth. Pull the Libraries key in as a BuildKit
 # secret (never a --build-arg, which would leak into image history) and
 # scrub it from the project .npmrc before the layer commits.
-# npm install occasionally segfaults transiently under this secret-mounted
-# RUN (seen both locally and on GitHub's native amd64 runners) -- retry a
-# few times before failing the build.
 RUN --mount=type=secret,id=ECHO_LIBRARIES_KEY \
     npm config set //npm.echohq.com/:_authToken "$(cat /run/secrets/ECHO_LIBRARIES_KEY)" --location=project && \
     npm config set //packages.echohq.com/:_authToken "$(cat /run/secrets/ECHO_LIBRARIES_KEY)" --location=project && \
-    ( install_status=1; \
-      for i in 1 2 3; do \
-        npm install --omit=dev && install_status=0 && break; \
-        echo "npm install failed (attempt $i), retrying..."; \
-        sleep 3; \
-      done; \
-      exit $install_status ); \
+    npm install --omit=dev; \
     status=$?; \
     npm config delete //npm.echohq.com/:_authToken --location=project || true; \
     npm config delete //packages.echohq.com/:_authToken --location=project || true; \
