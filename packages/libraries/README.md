@@ -89,6 +89,21 @@ curl https://advisory.echohq.com/openvex.json -o openvex.json
 trivy image --vex openvex.json libraries-echo
 ```
 
+**By default this scan just goes quiet** — a `--vex` match is dropped from
+the report entirely, with zero trace in the output. That's indistinguishable
+from "the scanner found nothing to begin with," which is exactly the
+confusing part. Add `--show-suppressed` (an `[EXPERIMENTAL]` Trivy flag,
+table format only — it isn't in the JSON schema as of Trivy 0.74) to get an
+explicit "Suppressed Vulnerabilities" section showing what was found and
+remediated:
+
+```bash
+trivy image --vex openvex.json --show-suppressed libraries-echo
+```
+
+CI does this automatically and posts the suppressed-vulnerabilities table to
+the `echo` job's summary, alongside the severity-count comparison.
+
 ## Lockfile note
 
 This demo intentionally does not commit a `package-lock.json`, to avoid the

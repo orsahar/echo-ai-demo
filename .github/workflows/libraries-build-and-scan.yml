@@ -111,6 +111,29 @@ jobs:
             --output trivy-results-${{ matrix.variant }}.json \
             ${{ matrix.image_name }}:${{ github.sha }}
 
+      # A --vex match is dropped from the scan entirely by default -- no
+      # trace in table or json output, which is indistinguishable from "the
+      # scanner just didn't find anything." --show-suppressed (table format
+      # only; it isn't in the json schema as of Trivy 0.74) adds a separate
+      # "Suppressed Vulnerabilities" section that actually shows the win.
+      - name: Show Echo-remediated vulnerabilities (suppressed by VEX)
+        if: matrix.variant == 'echo'
+        run: |
+          trivy image --scanners vuln --ignore-unfixed --exit-code 0 \
+            --vex openvex.json --show-suppressed --format table \
+            ${{ matrix.image_name }}:${{ github.sha }} > full-table.txt 2>/dev/null || true
+          {
+            echo "### Echo-remediated vulnerabilities (suppressed via OpenVEX)"
+            echo
+            if grep -q "Suppressed Vulnerabilities" full-table.txt; then
+              echo '```'
+              tail -n +"$(grep -n "Suppressed Vulnerabilities" full-table.txt | head -1 | cut -d: -f1)" full-table.txt
+              echo '```'
+            else
+              echo "_None suppressed for this build -- either no matching CVEs were found, or Echo hasn't backported a fix for the currently pinned version. Check the [Echo Store](https://app.echohq.com/store)._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Summarize scan results
         if: always()
         run: |
