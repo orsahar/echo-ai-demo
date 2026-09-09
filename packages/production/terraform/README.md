@@ -1,10 +1,13 @@
 # production/terraform
 
 Provisions the shared GCP infra for the `production` demo: a GKE Autopilot
-cluster, a GAR "remote repository" mirroring `reg.echohq.com` (Echo's own
+cluster, two GAR "remote repositories" mirroring Echo -- `reg.echohq.com`
+(images) and `npm.echohq.com` (npm packages) -- via Echo's own
 [`echo-terraform-gar-mirror`](https://github.com/buildecho/onboarding-providers/tree/main/echo-terraform-gar-mirror)
-module), a separate standard GAR repository for CI-built app images, and the
-IAM/service accounts both need.
+module, a separate standard GAR repository for CI-built app images, Workload
+Identity Federation for the deploy workflow, and the IAM/service accounts
+all of it needs. Both mirrors are verified working (real `docker pull` /
+`npm install` through each) -- see `packages/production/README.md`.
 
 **This is meant to be ephemeral.** Stand it up for a demo session, tear it
 down afterward with `terraform destroy`. `deletion_protection` is explicitly
@@ -26,7 +29,12 @@ continuously) — access is via `kubectl port-forward`.
   `gcloud auth application-default login`) against project `whtvr-ai` (or
   whatever `project_id` you set).
 - An Echo **Images** access key (Settings → Keys in the Echo platform — a
-  different key type from the Libraries key `packages/libraries` uses).
+  different key type from the Libraries key below).
+- An Echo **Libraries** key for the npm mirror. Unlike the Images key, the
+  username is **not** the key name or your email -- it's a separate "token
+  username" (format `et-N`), shown in the Echo app under
+  **Settings → Integrations → Google Artifact Registry**, next to the
+  module snippet it generates for you. Copy both from there.
 - IAM on your own account: `roles/container.admin`,
   `roles/artifactregistry.admin`, `roles/secretmanager.admin`,
   `roles/iam.serviceAccountAdmin`. (Echo's docs also list
@@ -40,7 +48,8 @@ continuously) — access is via `kubectl port-forward`.
 
 ```bash
 cp terraform.tfvars.example terraform.tfvars
-# fill in echo_image_key_name / echo_image_key_value
+# fill in echo_image_key_name / echo_image_key_value and
+# echo_library_key_name / echo_library_key_value
 terraform init
 terraform plan
 terraform apply

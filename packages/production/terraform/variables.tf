@@ -58,6 +58,18 @@ variable "echo_image_key_value" {
   sensitive   = true
 }
 
+variable "echo_library_key_name" {
+  description = "Echo Libraries access key name (username) for the GAR npm mirror -- a different key type from the Images key above. Required."
+  type        = string
+  sensitive   = true
+}
+
+variable "echo_library_key_value" {
+  description = "Echo Libraries access key value (password) for the GAR npm mirror. Required."
+  type        = string
+  sensitive   = true
+}
+
 variable "github_repo" {
   description = "GitHub \"owner/repo\" allowed to impersonate the CI/CD deployer SA via Workload Identity Federation."
   type        = string

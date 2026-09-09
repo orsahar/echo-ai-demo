@@ -50,22 +50,54 @@ this is a demo, not production data.
 
 **Once the resource reaches `Running`**, the operator creates a connection-
 string secret (`production-mongodb-connection-string`, name set via
-`connectionStringSecretName` on the user). Confirm the exact key inside it
-(`kubectl get secret production-mongodb-connection-string -n demo-prod -o
-yaml`) matches `chart/values.yaml`'s `mongodb.connectionStringSecretKey`
-before deploying the app -- written as `connectionString.standard` based on
-the community-operator convention, verify rather than trust.
+`connectionStringSecretName` on the user), with the ready-to-use connection
+string at key `connectionString.standard` -- confirmed live by reading the
+actual secret after a real install, matching `chart/values.yaml`'s
+`mongodb.connectionStringSecretKey`.
+
+Also confirmed live: `clusterAdmin` on the `admin` db does **not** grant
+data-level access to other databases. The user's role needs an explicit
+`readWrite` on the db the app actually uses (`k8s/mongodb-values.yaml`) --
+found via a real `POST /notes` returning "not authorized on production"
+before the role was corrected.
 
 ## The app
 
+`app/Dockerfile.echo` parameterizes both the base image (`BASE_IMAGE` arg)
+and the npm registry (`NPM_REGISTRY` arg + `NPM_AUTH_TOKEN` secret, keyed by
+the registry's host+path so the same mechanism works against either
+registry). Defaults pull directly from Echo -- used by
+`production-build-and-scan.yml`, which has no GCP/GAR dependency and must
+keep working even when the ephemeral infra is torn down. The real deploy
+workflow (`production-deploy.yml`) overrides both to route through the GAR
+mirror instead, matching Echo's own recommended pattern ("CI/CD pulls from
+your internal registry, not directly from Echo") -- verified live before
+wiring it up: a real `docker build` against the mirrored base image, and a
+real `npm install` through the GAR npm mirror resolving an actual tarball
+from that host, not a silent public-npm fallback.
+
 ```bash
 docker build -f app/Dockerfile -t production-regular app/
-# or, hardened:
+
+# Hardened, direct from Echo (matches production-build-and-scan.yml):
 docker login reg.echohq.com
 ECHO_LIBRARIES_KEY=<key> docker buildx build \
-  --secret id=ECHO_LIBRARIES_KEY,env=ECHO_LIBRARIES_KEY \
+  --secret id=NPM_AUTH_TOKEN,env=ECHO_LIBRARIES_KEY \
+  -f app/Dockerfile.echo -t production-echo --load app/
+
+# Hardened, through the GAR mirror (matches production-deploy.yml):
+export GAR_TOKEN=$(gcloud auth print-access-token)
+docker buildx build \
+  --build-arg BASE_IMAGE=us-central1-docker.pkg.dev/whtvr-ai/echo-demo-prod-mirror/node:23 \
+  --build-arg NPM_REGISTRY=https://us-central1-npm.pkg.dev/whtvr-ai/echo-demo-prod-mirror-npm/ \
+  --secret id=NPM_AUTH_TOKEN,env=GAR_TOKEN \
   -f app/Dockerfile.echo -t production-echo --load app/
 ```
+
+`npm install` occasionally segfaults transiently under the secret-mounted
+`RUN` (seen locally and on GitHub's native amd64 runners, regardless of
+which registry) -- the Dockerfile retries it a few times before failing the
+build.
 
 Push to the GAR app repo (output from `terraform output app_repository_url`),
 then:

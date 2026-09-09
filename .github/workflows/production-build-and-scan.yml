@@ -63,7 +63,7 @@ jobs:
         run: |
           if [ "${{ matrix.variant }}" = "echo" ]; then
             docker buildx build \
-              --secret id=ECHO_LIBRARIES_KEY,env=ECHO_LIBRARIES_KEY \
+              --secret id=NPM_AUTH_TOKEN,env=ECHO_LIBRARIES_KEY \
               --load \
               -f packages/production/app/${{ matrix.dockerfile }} \
               -t ${{ matrix.image_name }}:${{ github.sha }} \

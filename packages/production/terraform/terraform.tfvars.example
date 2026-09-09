@@ -1,11 +1,18 @@
 # Copy to terraform.tfvars (gitignored) and fill in real values.
 # echo_image_key_name / echo_image_key_value come from an "Images" access
-# key generated under Settings -> Keys in the Echo platform -- a different
-# key type from the Libraries key used by packages/libraries.
+# key generated under Settings -> Keys in the Echo platform.
+#
+# echo_library_key_name / echo_library_key_value are a *different* key type
+# (Libraries). Unlike the Images key, the username is NOT the key name or
+# your email -- it's a separate "token username" (format et-N) shown in
+# Echo's app under Settings -> Integrations -> Google Artifact Registry,
+# next to the module snippet it generates for you. Copy it from there.
 
-project_id            = "whtvr-ai"
-echo_image_key_name   = "CHANGE_ME"
-echo_image_key_value  = "CHANGE_ME"
+project_id             = "whtvr-ai"
+echo_image_key_name    = "CHANGE_ME"
+echo_image_key_value   = "CHANGE_ME"
+echo_library_key_name  = "et-CHANGE_ME"
+echo_library_key_value = "CHANGE_ME"
 
 # Everything else has a sensible default (see variables.tf) -- override only
 # if needed.

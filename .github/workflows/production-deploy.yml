@@ -21,6 +21,9 @@ env:
   CLUSTER_NAME: echo-demo-prod
   NAMESPACE: demo-prod
   APP_REPO: me-west1-docker.pkg.dev/whtvr-ai/echo-demo-prod-app/production
+  MIRROR_REGION: us-central1
+  BASE_IMAGE: us-central1-docker.pkg.dev/whtvr-ai/echo-demo-prod-mirror/node:23
+  NPM_MIRROR_REGISTRY: https://us-central1-npm.pkg.dev/whtvr-ai/echo-demo-prod-mirror-npm/
   # Not secrets -- WIF provider/SA identifiers are safe to commit; the
   # actual security boundary is the attribute_condition on the provider
   # (packages/production/terraform/wif.tf), which restricts impersonation
@@ -60,17 +63,31 @@ jobs:
         run: gcloud components install gke-gcloud-auth-plugin --quiet
 
       - name: Configure docker auth for GAR
-        run: gcloud auth configure-docker ${{ env.GKE_REGION }}-docker.pkg.dev --quiet
+        run: |
+          gcloud auth configure-docker ${{ env.GKE_REGION }}-docker.pkg.dev --quiet
+          gcloud auth configure-docker ${{ env.MIRROR_REGION }}-docker.pkg.dev --quiet
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
+      # Base image and npm packages both pull through the GAR mirror
+      # (packages/production/terraform/gar.tf), not directly from Echo --
+      # matches Echo's own recommended pattern ("CI/CD pulls from your
+      # internal registry, not directly from Echo"). Both paths verified
+      # live before wiring this up: a real `docker build` against
+      # BASE_IMAGE, and a real `npm install` through NPM_MIRROR_REGISTRY
+      # resolving a tarball from that host (not a silent public-npm
+      # fallback). The npm mirror auth token is a short-lived gcloud access
+      # token, not an Echo key -- GAR already holds the Echo credentials
+      # for this remote repo (provisioned in gar.tf), so the build only
+      # needs to authenticate to GAR itself.
       - name: Build and push app image
-        env:
-          ECHO_LIBRARIES_KEY: ${{ secrets.ECHO_LIBRARIES_KEY }}
         run: |
+          export GAR_TOKEN=$(gcloud auth print-access-token)
           docker buildx build \
-            --secret id=ECHO_LIBRARIES_KEY,env=ECHO_LIBRARIES_KEY \
+            --build-arg BASE_IMAGE=${{ env.BASE_IMAGE }} \
+            --build-arg NPM_REGISTRY=${{ env.NPM_MIRROR_REGISTRY }} \
+            --secret id=NPM_AUTH_TOKEN,env=GAR_TOKEN \
             --push \
             -f packages/production/app/Dockerfile.echo \
             -t ${{ env.APP_REPO }}:${{ github.sha }} \

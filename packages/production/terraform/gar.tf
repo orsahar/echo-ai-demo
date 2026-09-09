@@ -16,8 +16,17 @@ module "echo_gar_mirror" {
   echo_image_key_name  = var.echo_image_key_name
   echo_image_key_value = var.echo_image_key_value
 
+  # Mirrors npm.echohq.com too, so the deploy workflow's build pulls both
+  # the base image and npm packages through GAR rather than hitting Echo
+  # directly -- matches Echo's own recommended pattern ("CI/CD pulls from
+  # your internal registry, not directly from Echo").
+  echo_library_npm       = true
+  echo_library_key_name  = var.echo_library_key_name
+  echo_library_key_value = var.echo_library_key_value
+
   reader_members = [
     "serviceAccount:${google_service_account.gke_runtime.email}",
+    "serviceAccount:${google_service_account.cicd_deployer.email}",
   ]
 
   labels = var.labels
