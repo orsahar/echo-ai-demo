@@ -11,14 +11,15 @@ Monorepo for Echo sales-engineering demos. Each demo lives under `packages/`.
   and posts a side-by-side vulnerability comparison to the workflow run
   summary.
 
-- [`packages/libraries`](packages/libraries) - a minimal Node.js HTTP server
-  built two ways: once with a regular base image and dependencies from the
-  public npm registry, once on Echo's hardened base image *and* dependencies
-  from [Echo](https://docs.echohq.com)'s hardened npm index - stacking both
-  Echo surfaces. A vulnerable transitive dependency of `axios` is pinned
-  deliberately; Echo backports the CVE fix without changing the installed
-  version, so the workflow scans the Echo build with Echo's OpenVEX feed to
-  surface the reduction.
+- [`packages/libraries`](packages/libraries) - a Node.js HTTP server built
+  two ways: once with a regular base image and dependencies from the public
+  npm registry, once on Echo's hardened base image *and* dependencies from
+  [Echo](https://docs.echohq.com)'s hardened npm index - stacking both Echo
+  surfaces. Five real dependencies (`axios`/`follow-redirects`, `ajv`,
+  `nanoid`, `path-to-regexp`, `jws`) are pinned to versions with known CVEs;
+  Echo backports fixes without changing the installed version, so the
+  workflow scans the Echo build with Echo's OpenVEX feed to surface the
+  reduction (8 of 9 findings, in the current pinned set).
 
 ## Adding a new demo package
 
