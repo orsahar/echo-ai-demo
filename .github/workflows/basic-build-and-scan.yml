@@ -1,0 +1,126 @@
+name: basic - build & scan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "packages/basic/**"
+      - ".github/workflows/basic-build-and-scan.yml"
+  pull_request:
+    paths:
+      - "packages/basic/**"
+      - ".github/workflows/basic-build-and-scan.yml"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-scan:
+    name: build & scan (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: regular
+            dockerfile: Dockerfile
+            image_name: basic-regular
+          - variant: echo
+            dockerfile: Dockerfile.echo
+            image_name: basic-echo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Echo's registry (reg.echohq.com) requires authentication to pull.
+      # Create an access key under Settings -> Keys in the Echo platform and
+      # store it as the ECHO_REGISTRY_USERNAME / ECHO_REGISTRY_TOKEN repo secrets.
+      - name: Log in to Echo registry
+        if: matrix.variant == 'echo'
+        uses: docker/login-action@v3
+        with:
+          registry: reg.echohq.com
+          username: ${{ secrets.ECHO_REGISTRY_USERNAME }}
+          password: ${{ secrets.ECHO_REGISTRY_TOKEN }}
+
+      - name: Build ${{ matrix.variant }} image
+        run: |
+          docker build \
+            -f packages/basic/${{ matrix.dockerfile }} \
+            -t ${{ matrix.image_name }}:${{ github.sha }} \
+            packages/basic
+
+      - name: Scan image with Trivy (table)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ matrix.image_name }}:${{ github.sha }}
+          format: table
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Scan image with Trivy (json)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: ${{ matrix.image_name }}:${{ github.sha }}
+          format: json
+          output: trivy-results-${{ matrix.variant }}.json
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: Summarize scan results
+        if: always()
+        run: |
+          {
+            echo "### Trivy scan - ${{ matrix.variant }} image (\`${{ matrix.dockerfile }}\`)"
+            echo
+            counts=$(jq -r '
+              [.Results[]?.Vulnerabilities[]?] as $vulns
+              | ($vulns | length) as $total
+              | ($vulns | group_by(.Severity) | map({(.[0].Severity): length}) | add // {}) as $by_sev
+              | "| Severity | Count |\n|---|---|\n"
+                + (["CRITICAL","HIGH","MEDIUM","LOW","UNKNOWN"]
+                    | map("| \(.) | \($by_sev[.] // 0) |")
+                    | join("\n"))
+                + "\n| **Total** | **\($total)** |"
+            ' trivy-results-${{ matrix.variant }}.json)
+            echo "$counts"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Trivy results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-results-${{ matrix.variant }}
+          path: trivy-results-${{ matrix.variant }}.json
+          retention-days: 14
+
+  compare:
+    name: compare results
+    needs: build-and-scan
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all Trivy results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: trivy-results-*
+          path: results
+          merge-multiple: true
+
+      - name: Build comparison summary
+        run: |
+          {
+            echo "## Echo demo: regular vs. Echo-hardened image"
+            echo
+            echo "| Severity | regular (\`Dockerfile\`) | echo (\`Dockerfile.echo\`) |"
+            echo "|---|---|---|"
+            for sev in CRITICAL HIGH MEDIUM LOW UNKNOWN; do
+              regular=$(jq -r "[.Results[]?.Vulnerabilities[]? | select(.Severity==\"$sev\")] | length" results/trivy-results-regular.json 2>/dev/null || echo 0)
+              echo_count=$(jq -r "[.Results[]?.Vulnerabilities[]? | select(.Severity==\"$sev\")] | length" results/trivy-results-echo.json 2>/dev/null || echo 0)
+              echo "| $sev | $regular | $echo_count |"
+            done
+            regular_total=$(jq -r '[.Results[]?.Vulnerabilities[]?] | length' results/trivy-results-regular.json 2>/dev/null || echo 0)
+            echo_total=$(jq -r '[.Results[]?.Vulnerabilities[]?] | length' results/trivy-results-echo.json 2>/dev/null || echo 0)
+            echo "| **Total** | **$regular_total** | **$echo_total** |"
+          } >> "$GITHUB_STEP_SUMMARY"

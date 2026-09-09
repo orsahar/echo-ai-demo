@@ -1,0 +1,10 @@
+{
+  "name": "@echo-demo/basic",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Minimal Node.js HTTP server used to demo regular vs. Echo-hardened Docker base images",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  }
+}

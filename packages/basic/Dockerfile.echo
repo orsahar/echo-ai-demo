@@ -1,0 +1,13 @@
+# Same app, same everything -- only the base image changes.
+# See: https://docs.echohq.com/for-engineering/implementing#replace-the-base-image
+FROM reg.echohq.com/node:23
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --omit=dev
+
+COPY server.js ./
+
+EXPOSE 8080
+CMD ["node", "server.js"]
