@@ -1,0 +1,46 @@
+# Helm values for reg.echohq.com/charts/upstream/mongodb-kubernetes.
+#
+# Everything below was confirmed against the real chart (v1.10.0) via
+# `helm show values` / `helm show crds` / inspecting its templates directly
+# -- not assumed. Notably:
+#   - `community.createResource: true` makes the chart template the actual
+#     MongoDBCommunity custom resource itself (from `community.resource.*`
+#     below) -- no separate CR YAML needed.
+#   - `global.imageRegistry` overrides every image reference this chart uses
+#     (operator, agent, mongod, upgrade hook, readiness probe) in one place,
+#     so setting it to our GAR mirror routes the whole MongoDB deployment
+#     through GAR too, not just our own app image.
+#   - tls.enabled defaults to false already -- no cert-manager dependency.
+
+namespace: demo-prod
+
+global:
+  imageRegistry: us-central1-docker.pkg.dev/whtvr-ai/echo-demo-prod-mirror
+
+community:
+  createResource: true
+  resource:
+    name: production-mongodb
+    version: 8.0.28
+    # Single member, not a real replica set -- this is a demo, not
+    # production data. Keeps Autopilot pod-request billing to one pod
+    # instead of three.
+    members: 1
+    users:
+      - name: production-app
+        db: admin
+        passwordSecretRef:
+          # Created out-of-band (kubectl create secret), never committed --
+          # see packages/production/README.md.
+          name: production-mongodb-user-password
+        roles:
+          # clusterAdmin alone does NOT grant data-level access on other
+          # databases -- confirmed live: the app got "not authorized on
+          # production" until readWrite was added explicitly for the db
+          # the app actually uses (see db.js's MONGODB_DB_NAME default).
+          - name: readWrite
+            db: production
+        scramCredentialsSecretName: production-mongodb-scram
+        # The operator writes a ready-to-use connection string into this
+        # secret -- the app Deployment reads MONGODB_URI from it directly.
+        connectionStringSecretName: production-mongodb-connection-string

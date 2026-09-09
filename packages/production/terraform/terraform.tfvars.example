@@ -1,0 +1,11 @@
+# Copy to terraform.tfvars (gitignored) and fill in real values.
+# echo_image_key_name / echo_image_key_value come from an "Images" access
+# key generated under Settings -> Keys in the Echo platform -- a different
+# key type from the Libraries key used by packages/libraries.
+
+project_id            = "whtvr-ai"
+echo_image_key_name   = "CHANGE_ME"
+echo_image_key_value  = "CHANGE_ME"
+
+# Everything else has a sensible default (see variables.tf) -- override only
+# if needed.

@@ -1,0 +1,24 @@
+image:
+  repository: me-west1-docker.pkg.dev/whtvr-ai/echo-demo-prod-app/production
+  tag: latest
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+
+service:
+  port: 8080
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+mongodb:
+  connectionStringSecretName: production-mongodb-connection-string
+  # Key inside that secret holding the ready-to-use connection string --
+  # confirmed live against the operator's actual generated secret before
+  # this chart is deployed for real (see packages/production/README.md).
+  connectionStringSecretKey: connectionString.standard

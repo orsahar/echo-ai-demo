@@ -1,0 +1,14 @@
+# ClusterIP only, deliberately -- a LoadBalancer Service costs ~$18/month
+# continuously whether used or not. Access via `kubectl port-forward` for
+# demos (see packages/production/README.md).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  selector:
+    app: {{ .Release.Name }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: 8080

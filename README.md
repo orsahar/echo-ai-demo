@@ -21,6 +21,14 @@ Monorepo for Echo sales-engineering demos. Each demo lives under `packages/`.
   workflow scans the Echo build with Echo's OpenVEX feed to surface the
   reduction (8 of 9 findings, in the current pinned set).
 
+- [`packages/production`](packages/production) - the "final destination":
+  a real GKE Autopilot cluster (Terraform), Echo's registry mirrored into
+  Google Artifact Registry, Echo's `mongodb-kubernetes` Helm chart for real
+  MongoDB storage (its own images routed through the same GAR mirror), and
+  a real Node.js app -- hardened at the base-image and npm-index layers like
+  `packages/libraries` -- doing real CRUD against it. Ephemeral: stood up
+  per demo session, torn down afterward with `terraform destroy`.
+
 ## Adding a new demo package
 
 Create a new folder under `packages/<name>` and add its own workflow under

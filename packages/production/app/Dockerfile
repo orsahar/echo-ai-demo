@@ -1,0 +1,11 @@
+FROM node:23
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm install --omit=dev
+
+COPY db.js server.js ./
+
+EXPOSE 8080
+CMD ["node", "server.js"]

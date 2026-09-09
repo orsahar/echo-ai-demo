@@ -1,0 +1,195 @@
+name: production - deploy
+
+# Real, billable, mutating infrastructure -- manual trigger only, never on push.
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "deploy (build+push+helm upgrade) or destroy (helm uninstall the app release only -- cluster teardown is `terraform destroy`, run locally)"
+        required: true
+        type: choice
+        options: [deploy, destroy]
+        default: deploy
+
+permissions:
+  contents: read
+  id-token: write # required for Workload Identity Federation
+
+env:
+  PROJECT_ID: whtvr-ai
+  GKE_REGION: me-west1
+  CLUSTER_NAME: echo-demo-prod
+  NAMESPACE: demo-prod
+  APP_REPO: me-west1-docker.pkg.dev/whtvr-ai/echo-demo-prod-app/production
+  # Not secrets -- WIF provider/SA identifiers are safe to commit; the
+  # actual security boundary is the attribute_condition on the provider
+  # (packages/production/terraform/wif.tf), which restricts impersonation
+  # to workflow runs from this exact repo.
+  WIF_PROVIDER: projects/81729141946/locations/global/workloadIdentityPools/echo-demo-prod-github/providers/github
+  CICD_SA: echo-demo-prod-cicd@whtvr-ai.iam.gserviceaccount.com
+
+jobs:
+  deploy:
+    if: github.event.inputs.action == 'deploy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify Echo secrets are set
+        run: |
+          missing=""
+          [ -z "${{ secrets.ECHO_REGISTRY_USERNAME }}" ] && missing="$missing ECHO_REGISTRY_USERNAME"
+          [ -z "${{ secrets.ECHO_REGISTRY_TOKEN }}" ] && missing="$missing ECHO_REGISTRY_TOKEN"
+          [ -z "${{ secrets.ECHO_LIBRARIES_KEY }}" ] && missing="$missing ECHO_LIBRARIES_KEY"
+          if [ -n "$missing" ]; then
+            echo "::error::Missing required secret(s):$missing (see root README)"
+            exit 1
+          fi
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.CICD_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install gke-gcloud-auth-plugin
+        run: gcloud components install gke-gcloud-auth-plugin --quiet
+
+      - name: Configure docker auth for GAR
+        run: gcloud auth configure-docker ${{ env.GKE_REGION }}-docker.pkg.dev --quiet
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push app image
+        env:
+          ECHO_LIBRARIES_KEY: ${{ secrets.ECHO_LIBRARIES_KEY }}
+        run: |
+          docker buildx build \
+            --secret id=ECHO_LIBRARIES_KEY,env=ECHO_LIBRARIES_KEY \
+            --push \
+            -f packages/production/app/Dockerfile.echo \
+            -t ${{ env.APP_REPO }}:${{ github.sha }} \
+            packages/production/app
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.GKE_REGION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Log in to Echo registry (Helm reuses this for OCI chart pulls)
+        run: |
+          echo "${{ secrets.ECHO_REGISTRY_TOKEN }}" | helm registry login reg.echohq.com \
+            --username "${{ secrets.ECHO_REGISTRY_USERNAME }}" --password-stdin
+
+      - name: Ensure namespace and MongoDB user secret exist
+        run: |
+          kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
+          if ! kubectl get secret production-mongodb-user-password -n ${{ env.NAMESPACE }} >/dev/null 2>&1; then
+            kubectl create secret generic production-mongodb-user-password \
+              -n ${{ env.NAMESPACE }} --from-literal=password="$(openssl rand -base64 24)"
+          fi
+
+      - name: Install/upgrade MongoDB operator chart
+        run: |
+          helm upgrade --install mongodb-operator oci://reg.echohq.com/charts/upstream/mongodb-kubernetes \
+            --version 1.10.0 \
+            -f packages/production/k8s/mongodb-values.yaml \
+            -n ${{ env.NAMESPACE }}
+
+      - name: Wait for MongoDB to be ready
+        run: |
+          for i in $(seq 1 30); do
+            phase=$(kubectl get mongodbcommunity production-mongodb -n ${{ env.NAMESPACE }} -o jsonpath='{.status.phase}' 2>/dev/null || true)
+            echo "phase=$phase"
+            [ "$phase" = "Running" ] && exit 0
+            sleep 15
+          done
+          echo "::warning::MongoDB did not reach Running within the wait budget; continuing anyway"
+
+      - name: Deploy the app
+        run: |
+          helm upgrade --install production-app packages/production/chart \
+            -n ${{ env.NAMESPACE }} \
+            --set image.repository=${{ env.APP_REPO }} \
+            --set image.tag=${{ github.sha }}
+          kubectl rollout status deployment/production-app -n ${{ env.NAMESPACE }} --timeout=180s
+
+      - name: Verify real CRUD against MongoDB
+        run: |
+          kubectl run curl-check --rm -i --restart=Never --image=curlimages/curl:8.11.0 -n ${{ env.NAMESPACE }} -- \
+            sh -c 'curl -sf http://production-app:8080/health && echo && \
+                   curl -sf -X POST http://production-app:8080/notes -H "Content-Type: application/json" -d "{\"text\":\"deployed via CI $GITHUB_SHA\"}" && echo && \
+                   curl -sf http://production-app:8080/notes'
+
+      - name: Report -- how Echo secured this deployment
+        env:
+          ECHO_KEY_NAME: ${{ secrets.ECHO_REGISTRY_USERNAME }}
+          ECHO_KEY_VALUE: ${{ secrets.ECHO_REGISTRY_TOKEN }}
+        run: |
+          {
+            echo "## How Echo secured this deployment"
+            echo
+            echo "- Base image + npm dependencies: hardened via reg.echohq.com / npm.echohq.com"
+            echo "  (see the production-build-and-scan.yml run for this commit for the full"
+            echo "  Trivy + OpenVEX comparison)."
+            echo "- Container registry: mirrored through GAR"
+            echo "  (\`us-central1-docker.pkg.dev/whtvr-ai/echo-demo-prod-mirror\`), not pulled"
+            echo "  directly from reg.echohq.com at runtime."
+            echo "- MongoDB: deployed via Echo's \`mongodb-kubernetes\` chart, its own images"
+            echo "  (operator, agent, mongod, upgrade hook, readiness probe) also routed"
+            echo "  through the same GAR mirror."
+            echo
+            token=$(curl -sf -u "$ECHO_KEY_NAME:$ECHO_KEY_VALUE" https://api.echohq.com/api/v1/auth/token | jq -r '.token' 2>/dev/null || true)
+            if [ -n "$token" ] && [ "$token" != "null" ]; then
+              echo "### Echo API: live data"
+              echo
+              echo '```json'
+              curl -sf -H "Authorization: Bearer $token" \
+                "https://api.echohq.com/api/v1/charts/upstream/mongodb-kubernetes/versions/1.10.0/cve-overtime?daysBack=30" \
+                2>/dev/null | head -c 2000 || echo "(request failed -- endpoint/params may need adjustment, see packages/production/README.md)"
+              echo
+              echo '```'
+            else
+              echo "_Could not exchange the Echo key for an API token -- skipping live data, see packages/production/README.md._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  destroy:
+    if: github.event.inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Authenticate to GCP (Workload Identity Federation)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ env.WIF_PROVIDER }}
+          service_account: ${{ env.CICD_SA }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install gke-gcloud-auth-plugin
+        run: gcloud components install gke-gcloud-auth-plugin --quiet
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER_NAME }}
+          location: ${{ env.GKE_REGION }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Uninstall the app release
+        run: helm uninstall production-app -n ${{ env.NAMESPACE }} || true
+
+      - name: Reminder
+        run: echo "::notice::App release removed. MongoDB and the cluster itself are NOT torn down here -- run 'terraform destroy' locally (see packages/production/terraform/README.md)."

@@ -1,0 +1,13 @@
+{
+  "name": "@echo-demo/production",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Real MongoDB-backed Node.js app deployed to GKE, demonstrating Echo-hardened base image + npm index + Helm chart + GAR-mirrored images end to end",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "mongodb": "6.10.0"
+  }
+}

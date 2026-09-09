@@ -1,0 +1,23 @@
+# syntax=docker/dockerfile:1
+# Same app, same everything -- base image AND npm registry point at Echo,
+# same pattern proven in packages/libraries.
+FROM reg.echohq.com/node:23
+
+WORKDIR /app
+
+COPY package*.json ./
+COPY .npmrc.echo ./.npmrc
+
+RUN --mount=type=secret,id=ECHO_LIBRARIES_KEY \
+    npm config set //npm.echohq.com/:_authToken "$(cat /run/secrets/ECHO_LIBRARIES_KEY)" --location=project && \
+    npm config set //packages.echohq.com/:_authToken "$(cat /run/secrets/ECHO_LIBRARIES_KEY)" --location=project && \
+    npm install --omit=dev; \
+    status=$?; \
+    npm config delete //npm.echohq.com/:_authToken --location=project || true; \
+    npm config delete //packages.echohq.com/:_authToken --location=project || true; \
+    exit $status
+
+COPY db.js server.js ./
+
+EXPOSE 8080
+CMD ["node", "server.js"]
